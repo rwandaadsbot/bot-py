@@ -1,0 +1,97 @@
+import sqlite3
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+
+TOKEN = "8425737050:AAFOczSwPzZ5WSfya9kLMSjG0JcrTPlryiE"
+ADMIN_ID = 5898587210  # Admin ID
+
+# Database setup
+conn = sqlite3.connect("bot.db")
+cursor = conn.cursor()
+cursor.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER)")
+cursor.execute("CREATE TABLE IF NOT EXISTS ads (user_id INTEGER, text TEXT, status TEXT)")
+conn.commit()
+
+# Start command
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    cursor.execute("INSERT OR IGNORE INTO users VALUES (?)", (user_id,))
+    conn.commit()
+
+    await update.message.reply_text(
+        "Welcome to Rwanda Ads Bot 🇷🇼📢\n"
+        "Send your ad here and pay to go live.\n\n"
+        "**Payment Options:**\n"
+        "MoMo: +250788459629\n"
+        "USDT TRC20: TGvekc4N8hQerBrTdscnvCpPDfxfjxW6rf\n"
+        "BTC: 12zigAGiaGbsUqpNQ77CCZeZvbosZNA5AA\n\n"
+        "After payment, type 'DONE' and the admin will approve your ad."
+    )
+
+# Receive ad
+async def receive_ad(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    text = update.message.text
+
+    cursor.execute("INSERT INTO ads VALUES (?, ?, ?)", (user_id, text, "pending"))
+    conn.commit()
+
+    await update.message.reply_text(
+        "✅ Your ad has been received!\n"
+        "Please pay first to proceed:\n"
+        "MoMo: +250788459629\n"
+        "USDT TRC20: TGvekc4N8hQerBrTdscnvCpPDfxfjxW6rf\n"
+        "BTC: 12zigAGiaGbsUqpNQ77CCZeZvbosZNA5AA\n\n"
+        "After payment, type 'DONE'."
+    )
+
+    # Notify admin
+    await context.bot.send_message(
+        chat_id=ADMIN_ID,
+        text=f"New Ad Submission:\n{text}\nFrom User ID: {user_id}"
+    )
+
+# Confirm payment
+async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text.strip().lower() == "done":
+        await update.message.reply_text(
+            "Thank you! Your payment will be verified by admin shortly ⏳"
+        )
+
+# Approve ad (admin only)
+async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    cursor.execute("SELECT rowid, * FROM ads WHERE status='pending'")
+    ad = cursor.fetchone()
+
+    if not ad:
+        await update.message.reply_text("No pending ads.")
+        return
+
+    ad_id, user_id, text, status = ad
+
+    # Broadcast to all users
+    cursor.execute("SELECT id FROM users")
+    users = cursor.fetchall()
+
+    for u in users:
+        try:
+            await context.bot.send_message(u[0], f"📢 AD:\n{text}")
+        except:
+            pass
+
+    cursor.execute("UPDATE ads SET status='approved' WHERE rowid=?", (ad_id,))
+    conn.commit()
+
+    await update.message.reply_text("Ad has been broadcasted to all users ✅")
+
+# Telegram bot setup
+app = ApplicationBuilder().token(TOKEN).build()
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("approve", approve))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_ad))
+app.add_handler(MessageHandler(filters.TEXT, confirm))
+
+app.run_polling()
